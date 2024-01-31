@@ -45,6 +45,7 @@ class PluginUpdater
         // Save manifest
         $this->manifest = new PluginManifest();
         $this->manifest->name = $plugin_data['Name'];
+        $this->manifest->description = $plugin_data['Description'];
         $this->manifest->slug = basename(dirname($plugin_file));
         $this->manifest->version = $plugin_data['Version'];
         $this->manifest->tested = get_bloginfo( 'version' );
