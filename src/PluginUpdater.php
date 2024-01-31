@@ -1,6 +1,7 @@
 <?php namespace Mkey\WpUpdater;
 
 use Exception;
+use WP_CLI;
 
 class PluginUpdater
 {
@@ -58,7 +59,12 @@ class PluginUpdater
         add_action('upgrader_process_complete', [$this, 'purge'], 10, 2);
 
         // CLI
-        \WP_CLI::add_command('mkey-updater push ' . $this->manifest->slug, [$this, 'push_update']);
+        add_action('cli_init', [$this, 'register_cli_commands']);
+    }
+
+    public function register_cli_commands(): void
+    {
+        WP_CLI::add_command('mkey-updater push ' . $this->manifest->slug, [$this, 'push_update']);
     }
 
     public function request(): PluginManifest|false
@@ -171,9 +177,11 @@ class PluginUpdater
         $filename = WP_CONTENT_DIR . '/uploads/' . $this->manifest->slug . '-' . $this->manifest->version . '.zip';
         $zip = new \ZipArchive();
         if ( !$zip->open($filename, \ZipArchive::CREATE|\ZipArchive::OVERWRITE) ) {
-
         }
+
+        add_filter('plugin_files_exclusions', '__return_empty_array');
         $files = get_plugin_files(plugin_basename($this->path));
+
         foreach( $files as $file )
             $zip->addFile(WP_PLUGIN_DIR . '/' . $file, $file);
         $zip->close();
@@ -209,11 +217,11 @@ class PluginUpdater
 
     public function push_update(): void
     {
-        \WP_CLI::line('Starting preparing export');
+        WP_CLI::line('Starting preparing export');
         $data = $this->prepare_export();
-        \WP_CLI::line('Zip generated : '.$data['file']);
+        WP_CLI::line('Zip generated : '.$data['file']);
 
-        \WP_CLI::line('Starting file upload');
+        WP_CLI::line('Starting file upload');
         $boundary = hash('sha256', uniqid('', true));
         $endpoint = trailingslashit($this->options['repository']) . $this->manifest->slug;
         $remote = wp_remote_request($endpoint, [
@@ -227,15 +235,15 @@ class PluginUpdater
         ]);
 
         if ( is_wp_error($remote) || wp_remote_retrieve_response_code($remote) != 200 || empty(wp_remote_retrieve_body($remote)) ) {
-            \WP_CLI::errror('Something was wrong');
+            WP_CLI::errror('Something was wrong');
             return;
         }
 
         unlink($data['file']);
-        \WP_CLI::line('Temp file deleted');
+        WP_CLI::line('Temp file deleted');
 
         $res = json_decode(wp_remote_retrieve_body($remote), true);
-        \WP_CLI::success('Plugin updated');
-        \WP_CLI::line(json_encode($res, JSON_PRETTY_PRINT));
+        WP_CLI::success('Plugin updated');
+        WP_CLI::line(json_encode($res, JSON_PRETTY_PRINT));
     }
 }
