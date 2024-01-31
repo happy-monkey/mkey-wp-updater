@@ -12,9 +12,16 @@ class PluginUpdater
     private array $options = [];
 
     /**
+     * @param string $plugin_file
+     * @param array{
+     *     repository: string,
+     *     cache_allowed: bool,
+     *     extra_links: array-key,
+     * } $options
+     * @return PluginUpdater
      * @throws Exception
      */
-    public static function init(string $plugin_file, array $options = [] ): self
+    public static function init( string $plugin_file, array $options = [] ): self
     {
         return new PluginUpdater($plugin_file, $options);
     }
@@ -40,6 +47,7 @@ class PluginUpdater
         $this->options = wp_parse_args($options, [
             'repository' => '',
             'cache_allowed' => false,
+            'extra_links' => [],
         ]);
 
         // Save manifest
@@ -55,9 +63,10 @@ class PluginUpdater
         $this->manifest->author_profile = $plugin_data['AuthorURI'];
 
         // API hooks
-        add_filter('plugin_api', [$this, 'get_plugin_info'], 20, 3);
+        add_filter('plugins_api', [$this, 'get_plugin_info'], 20, 3);
         add_filter('site_transient_update_plugins', [$this, 'update']);
         add_action('upgrader_process_complete', [$this, 'purge'], 10, 2);
+        add_filter('plugin_row_meta', [$this, 'get_plugin_links'], 25, 4);
 
         // CLI
         add_action('cli_init', [$this, 'register_cli_commands']);
@@ -66,6 +75,35 @@ class PluginUpdater
     public function register_cli_commands(): void
     {
         WP_CLI::add_command('mkey-updater push ' . $this->manifest->slug, [$this, 'push_update']);
+    }
+
+    public function get_plugin_links( $links_array, $plugin_file_name, $plugin_data, $status )
+    {
+        if( strpos( $plugin_file_name, basename($this->path) ) )
+        {
+            if ( !array_key_exists('update', $plugin_data) )
+            {
+                $links_array[] = sprintf(
+                    '<a href="%s" class="thickbox open-plugin-details-modal">%s</a>',
+                    add_query_arg(
+                        [
+                            'tab' => 'plugin-information',
+                            'plugin' => $this->manifest->slug,
+                            'TB_iframe' => true,
+                            'width' => 772,
+                            'height' => 788
+                        ],
+                        admin_url( 'plugin-install.php' )
+                    ),
+                    __( 'View details' )
+                );
+            }
+
+            foreach( $this->options['extra_links'] as $label => $href )
+                $links_array[] = sprintf('<a href="%s" target="_blank">%s</a>', $href, $label);
+        }
+
+        return $links_array;
     }
 
     public function request(): PluginManifest|false
@@ -121,11 +159,9 @@ class PluginUpdater
         $res->requires_php = $remote->requires_php;
         $res->download_link = $remote->download_url;
         $res->trunk = $remote->download_url;
-        $res->last_updated = $remote->updated_at;
+        $res->last_updated = date('Y-m-d H:i:s');
         $res->sections = [
             'description' => $remote->description,
-            'installation' => '',
-            'changelog' => '',
         ];
 
         return $res;
