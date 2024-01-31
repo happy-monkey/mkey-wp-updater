@@ -1,0 +1,17 @@
+{
+    "name": "happy-monkey/wp-updater",
+    "type": "library",
+    "autoload": {
+        "psr-4": {
+            "Mkey\\WpUpdater\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Happy Monkey",
+            "email": "contact@happy-monkey.fr"
+        }
+    ],
+    "require": {},
+    "minimum-stability": "dev"
+}
