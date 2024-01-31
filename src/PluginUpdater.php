@@ -236,7 +236,7 @@ class PluginUpdater
         ]);
 
         if ( is_wp_error($remote) || wp_remote_retrieve_response_code($remote) != 200 || empty(wp_remote_retrieve_body($remote)) ) {
-            WP_CLI::errror('Something was wrong');
+            WP_CLI::error('Something was wrong');
             return;
         }
 
