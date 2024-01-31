@@ -224,7 +224,7 @@ class PluginUpdater
 
         WP_CLI::line('Starting file upload');
         $boundary = hash('sha256', uniqid('', true));
-        $endpoint = trailingslashit($this->options['repository']) . $this->manifest->slug;
+        $endpoint = $this->options['repository'];
         $remote = wp_remote_request($endpoint, [
             'method' => 'POST',
             'headers' => [
