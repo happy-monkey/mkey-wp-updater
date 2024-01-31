@@ -161,9 +161,9 @@ class PluginUpdater
 
     private function remote_version_matches( PluginManifest $remote ): bool
     {
-        return version_compare( $this->manifest->version, $remote->version, '<' )
-            && version_compare( $remote->requires_wp, $this->manifest->requires_wp, '<=' )
-            && version_compare( $remote->requires_php, $this->manifest->requires_php, '<=' );
+        return version_compare( $this->manifest->version, $remote->version, '<' );
+        /* && version_compare( $remote->requires_wp, $this->manifest->requires_wp, '<=' )
+            && version_compare( $remote->requires_php, $this->manifest->requires_php, '<=' );*/
     }
 
     private function _get_cache_key(): string
