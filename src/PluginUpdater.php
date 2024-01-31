@@ -226,7 +226,7 @@ class PluginUpdater
         $boundary = hash('sha256', uniqid('', true));
         $endpoint = trailingslashit($this->options['repository']) . $this->manifest->slug;
         $remote = wp_remote_request($endpoint, [
-            'method' => 'PATCH',
+            'method' => 'POST',
             'headers' => [
                 'Content-Type' => 'multipart/form-data; boundary=' . $boundary,
             ],
