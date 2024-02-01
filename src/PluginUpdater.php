@@ -1,7 +1,9 @@
 <?php namespace Mkey\WpUpdater;
 
 use Exception;
+use stdClass;
 use WP_CLI;
+use ZipArchive;
 
 class PluginUpdater
 {
@@ -72,11 +74,23 @@ class PluginUpdater
         add_action('cli_init', [$this, 'register_cli_commands']);
     }
 
+    /**
+     * @return void
+     * @hook cli_init
+     */
     public function register_cli_commands(): void
     {
-        WP_CLI::add_command('mkey-updater push ' . $this->manifest->slug, [$this, 'push_update']);
+        WP_CLI::add_command('mkey-updater push ' . $this->manifest->slug, [$this, 'cli_push_update']);
     }
 
+    /**
+     * @param $links_array
+     * @param $plugin_file_name
+     * @param $plugin_data
+     * @param $status
+     * @return mixed
+     * @hook plugin_row_meta
+     */
     public function get_plugin_links( $links_array, $plugin_file_name, $plugin_data, $status )
     {
         if( strpos( $plugin_file_name, basename($this->path) ) )
@@ -106,6 +120,9 @@ class PluginUpdater
         return $links_array;
     }
 
+    /**
+     * @return PluginManifest|false
+     */
     public function request(): PluginManifest|false
     {
         $remote = get_transient($this->_get_cache_key());
@@ -133,6 +150,13 @@ class PluginUpdater
         return new PluginManifest(json_decode(wp_remote_retrieve_body($remote), true));
     }
 
+    /**
+     * @param $res
+     * @param $action
+     * @param $args
+     * @return mixed|stdClass
+     * @hook plugins_api
+     */
     public function get_plugin_info( $res, $action, $args )
     {
         // do nothing if you're not getting plugin information right now
@@ -147,7 +171,7 @@ class PluginUpdater
         if( !$remote )
             return $res;
 
-        $res = new \stdClass();
+        $res = new stdClass();
 
         $res->name = $remote->name;
         $res->slug = $remote->slug;
@@ -159,7 +183,7 @@ class PluginUpdater
         $res->requires_php = $remote->requires_php;
         $res->download_link = $remote->download_url;
         $res->trunk = $remote->download_url;
-        $res->last_updated = date('Y-m-d H:i:s');
+        $res->last_updated = $remote->updated_at;
         $res->sections = [
             'description' => $remote->description,
         ];
@@ -167,6 +191,11 @@ class PluginUpdater
         return $res;
     }
 
+    /**
+     * @param $transient
+     * @return mixed
+     * @hook site_transient_update_plugins
+     */
     public function update( $transient ): mixed
     {
         if ( empty($transient->checked ) )
@@ -178,7 +207,7 @@ class PluginUpdater
 
         if ( $this->remote_version_matches($remote) )
         {
-            $res = new \stdClass();
+            $res = new stdClass();
             $res->slug = $this->manifest->slug;
             $res->plugin = plugin_basename($this->path);
             $res->new_version = $remote->version;
@@ -190,12 +219,22 @@ class PluginUpdater
         return $transient;
     }
 
+    /**
+     * @param $upgrader
+     * @param $options
+     * @return void
+     * @hook upgrader_process_complete
+     */
     public function purge( $upgrader, $options ): void
     {
         if ( $this->options['cache_allowed'] && $options['action'] == 'update' && $options['type'] == 'plugin' )
             delete_transient($this->_get_cache_key());
     }
 
+    /**
+     * @param PluginManifest $remote
+     * @return bool
+     */
     private function remote_version_matches( PluginManifest $remote ): bool
     {
         return version_compare( $this->manifest->version, $remote->version, '<' );
@@ -203,18 +242,26 @@ class PluginUpdater
             && version_compare( $remote->requires_php, $this->manifest->requires_php, '<=' );*/
     }
 
+    /**
+     * @return string
+     */
     private function _get_cache_key(): string
     {
         return 'plugin-update-' . $this->manifest->slug;
     }
 
-    private function prepare_export()
+    /**
+     * @return array{ file:string, manifest: array }
+     * @throws Exception
+     */
+    private function prepare_export(): array
     {
         // Generate zip
         $filename = WP_CONTENT_DIR . '/uploads/' . $this->manifest->slug . '-' . $this->manifest->version . '.zip';
-        $zip = new \ZipArchive();
-        if ( !$zip->open($filename, \ZipArchive::CREATE|\ZipArchive::OVERWRITE) ) {
-        }
+        $zip = new ZipArchive();
+
+        if ( !$zip->open($filename, ZipArchive::CREATE| ZipArchive::OVERWRITE) )
+            throw new Exception('Could not create');
 
         add_filter('plugin_files_exclusions', '__return_empty_array');
         $files = get_plugin_files(plugin_basename($this->path));
@@ -229,10 +276,17 @@ class PluginUpdater
         ];
     }
 
+    /**
+     * @param string $boundary
+     * @param array $fields
+     * @param array $files
+     * @return string
+     */
     private function generate_payload( string $boundary, array $fields, array $files ): string
     {
         $payload = '';
 
+        // Add form data fields
         foreach( $fields as $name => $value )
         {
             $payload .= sprintf("--%s\r\n", $boundary);
@@ -240,6 +294,7 @@ class PluginUpdater
             $payload .= sprintf("%s\r\n", $value);
         }
 
+        // Add file to upload
         foreach ( $files as $name => $path )
         {
             $payload .= sprintf("--%s\r\n", $boundary);
@@ -247,40 +302,61 @@ class PluginUpdater
             $payload .= sprintf("%s\r\n", file_get_contents($path));
         }
 
+        // Finish payload
         $payload .= '--' . $boundary . '--';
 
         return $payload;
     }
 
-    public function push_update(): void
+    /**
+     * @param $plugin_data
+     * @param $file
+     * @return array
+     * @throws Exception
+     */
+    protected function push_update($plugin_data, $file ): array
     {
-        WP_CLI::line('Starting preparing export');
-        $data = $this->prepare_export();
-        WP_CLI::line('Zip generated : '.$data['file']);
-
-        WP_CLI::line('Starting file upload');
         $boundary = hash('sha256', uniqid('', true));
-        $endpoint = $this->options['repository'];
-        $remote = wp_remote_request($endpoint, [
+        $remote = wp_remote_request($this->options['repository'], [
             'method' => 'POST',
             'headers' => [
                 'Content-Type' => 'multipart/form-data; boundary=' . $boundary,
             ],
-            'body' => $this->generate_payload($boundary, $data['manifest'], [
-                'file' => $data['file'],
-            ]),
+            'body' => $this->generate_payload($boundary, $plugin_data, ['file' => $file]),
         ]);
 
-        if ( is_wp_error($remote) || wp_remote_retrieve_response_code($remote) != 200 || empty(wp_remote_retrieve_body($remote)) ) {
-            WP_CLI::error('Something was wrong');
-            return;
+        if ( is_wp_error($remote) )
+            throw new Exception($remote->get_error_message());
+
+        $body = wp_remote_retrieve_body($remote);
+
+        if ( empty($body) )
+            throw new Exception('Empty response body');
+
+        if ( wp_remote_retrieve_response_code($remote) != 200  )
+            throw new Exception($body);
+
+        return json_decode(wp_remote_retrieve_body($remote), true);
+    }
+
+    /**
+     * @return void
+     */
+    public function cli_push_update(): void
+    {
+        try {
+            WP_CLI::line('Preparing export');
+            $data = $this->prepare_export();
+            WP_CLI::line('Zip generated : '.$data['file']);
+
+            WP_CLI::line('Starting file upload');
+            $res = $this->push_update($data['manifest'], $data['file']);
+            WP_CLI::line('File uploaded');
+
+            WP_CLI::success('Plugin updated');
+            WP_CLI::line(json_encode($res, JSON_PRETTY_PRINT));
+        } catch ( Exception $exception ) {
+            WP_CLI::error($exception->getMessage());
         }
-
-        unlink($data['file']);
-        WP_CLI::line('Temp file deleted');
-
-        $res = json_decode(wp_remote_retrieve_body($remote), true);
-        WP_CLI::success('Plugin updated');
-        WP_CLI::line(json_encode($res, JSON_PRETTY_PRINT));
     }
 }
