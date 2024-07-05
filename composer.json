@@ -12,6 +12,5 @@
             "email": "contact@happy-monkey.fr"
         }
     ],
-    "require": {},
     "minimum-stability": "dev"
 }

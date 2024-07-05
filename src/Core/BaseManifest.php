@@ -1,19 +1,9 @@
-<?php namespace Mkey\WpUpdater;
+<?php namespace Mkey\WpUpdater\Core;
 
 /**
- * @property string $name
  * @property string $slug
- * @property string $description
- * @property string $version
- * @property string $tested
- * @property string $requires_wp
- * @property string $requires_php
- * @property string $author
- * @property string $author_profile
- * @property string $download_url
- * @property string $updated_at
  */
-class PluginManifest implements \JsonSerializable
+abstract class BaseManifest implements \JsonSerializable
 {
     private array $attributes = [];
 

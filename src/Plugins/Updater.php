@@ -1,17 +1,17 @@
-<?php namespace Mkey\WpUpdater;
+<?php namespace Mkey\WpUpdater\Plugins;
 
 use Exception;
+use Mkey\WpUpdater\Core\BaseUpdater;
 use stdClass;
-use WP_CLI;
 use ZipArchive;
 
-class PluginUpdater
+class Updater extends BaseUpdater
 {
-    private string $path;
+    protected string $path;
 
-    private PluginManifest $manifest;
+    protected Manifest $manifest;
 
-    private array $options = [];
+    protected array $options = [];
 
     /**
      * @param string $plugin_file
@@ -20,21 +20,20 @@ class PluginUpdater
      *     cache_allowed: bool,
      *     extra_links: array-key,
      * } $options
-     * @return PluginUpdater
+     * @return Updater
      * @throws Exception
      */
     public static function init( string $plugin_file, array $options = [] ): self
     {
-        return new PluginUpdater($plugin_file, $options);
+        return new self($plugin_file, $options);
     }
 
     /**
      * @throws Exception
      */
-    private function __construct(string $plugin_file, array $options )
+    protected function __construct(string $plugin_file, array $options )
     {
-        if ( !defined('WPINC') )
-            throw new Exception('Mkey WP Updater should be executed in Wordpress context');
+        parent::__construct();
 
         // Load plugin data
         require_once ABSPATH . '/wp-admin/includes/plugin.php';
@@ -53,7 +52,7 @@ class PluginUpdater
         ]);
 
         // Save manifest
-        $this->manifest = new PluginManifest();
+        $this->manifest = new Manifest();
         $this->manifest->name = $plugin_data['Name'];
         $this->manifest->description = $plugin_data['Description'];
         $this->manifest->slug = basename(dirname($plugin_file));
@@ -64,23 +63,13 @@ class PluginUpdater
         $this->manifest->author = $plugin_data['Author'];
         $this->manifest->author_profile = $plugin_data['AuthorURI'];
 
+        $this->slug = $this->manifest->slug;
+
         // API hooks
         add_filter('plugins_api', [$this, 'get_plugin_info'], 20, 3);
         add_filter('site_transient_update_plugins', [$this, 'update']);
         add_action('upgrader_process_complete', [$this, 'purge'], 10, 2);
         add_filter('plugin_row_meta', [$this, 'get_plugin_links'], 25, 4);
-
-        // CLI
-        add_action('cli_init', [$this, 'register_cli_commands']);
-    }
-
-    /**
-     * @return void
-     * @hook cli_init
-     */
-    public function register_cli_commands(): void
-    {
-        WP_CLI::add_command('mkey-updater push ' . $this->manifest->slug, [$this, 'cli_push_update']);
     }
 
     /**
@@ -91,7 +80,7 @@ class PluginUpdater
      * @return mixed
      * @hook plugin_row_meta
      */
-    public function get_plugin_links( $links_array, $plugin_file_name, $plugin_data, $status )
+    public function get_plugin_links( $links_array, $plugin_file_name, $plugin_data, $status ): mixed
     {
         if( strpos( $plugin_file_name, basename($this->path) ) )
         {
@@ -121,9 +110,9 @@ class PluginUpdater
     }
 
     /**
-     * @return PluginManifest|false
+     * @return Manifest|false
      */
-    public function request(): PluginManifest|false
+    public function request(): Manifest|false
     {
         $remote = get_transient($this->_get_cache_key());
 
@@ -147,17 +136,17 @@ class PluginUpdater
         }
 
         // Return the json
-        return new PluginManifest(json_decode(wp_remote_retrieve_body($remote), true));
+        return new Manifest(json_decode(wp_remote_retrieve_body($remote), true));
     }
 
     /**
      * @param $res
      * @param $action
      * @param $args
-     * @return mixed|stdClass
+     * @return mixed
      * @hook plugins_api
      */
-    public function get_plugin_info( $res, $action, $args )
+    public function get_plugin_info( $res, $action, $args ): mixed
     {
         // do nothing if you're not getting plugin information right now
         if( $action != 'plugin_information' )
@@ -232,10 +221,10 @@ class PluginUpdater
     }
 
     /**
-     * @param PluginManifest $remote
+     * @param Manifest $remote
      * @return bool
      */
-    private function remote_version_matches( PluginManifest $remote ): bool
+    private function remote_version_matches( Manifest $remote ): bool
     {
         return version_compare( $this->manifest->version, $remote->version, '<' );
         /* && version_compare( $remote->requires_wp, $this->manifest->requires_wp, '<=' )
@@ -254,7 +243,7 @@ class PluginUpdater
      * @return array{ file:string, manifest: array }
      * @throws Exception
      */
-    private function prepare_export(): array
+    protected function prepare_export(): array
     {
         // Generate zip
         $filename = WP_CONTENT_DIR . '/uploads/' . $this->manifest->slug . '-' . $this->manifest->version . '.zip';
@@ -274,89 +263,5 @@ class PluginUpdater
             'file' => $filename,
             'manifest' => $this->manifest->toArray(),
         ];
-    }
-
-    /**
-     * @param string $boundary
-     * @param array $fields
-     * @param array $files
-     * @return string
-     */
-    private function generate_payload( string $boundary, array $fields, array $files ): string
-    {
-        $payload = '';
-
-        // Add form data fields
-        foreach( $fields as $name => $value )
-        {
-            $payload .= sprintf("--%s\r\n", $boundary);
-            $payload .= sprintf("Content-Disposition: form-data; name=\"%s\"\r\n\r\n", $name);
-            $payload .= sprintf("%s\r\n", $value);
-        }
-
-        // Add file to upload
-        foreach ( $files as $name => $path )
-        {
-            $payload .= sprintf("--%s\r\n", $boundary);
-            $payload .= sprintf("Content-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\nContent-Type: %s\r\n\r\n", $name, basename($path), mime_content_type($path));
-            $payload .= sprintf("%s\r\n", file_get_contents($path));
-        }
-
-        // Finish payload
-        $payload .= '--' . $boundary . '--';
-
-        return $payload;
-    }
-
-    /**
-     * @param $plugin_data
-     * @param $file
-     * @return array
-     * @throws Exception
-     */
-    protected function push_update($plugin_data, $file ): array
-    {
-        $boundary = hash('sha256', uniqid('', true));
-        $remote = wp_remote_request($this->options['repository'], [
-            'method' => 'POST',
-            'headers' => [
-                'Content-Type' => 'multipart/form-data; boundary=' . $boundary,
-            ],
-            'body' => $this->generate_payload($boundary, $plugin_data, ['file' => $file]),
-        ]);
-
-        if ( is_wp_error($remote) )
-            throw new Exception($remote->get_error_message());
-
-        $body = wp_remote_retrieve_body($remote);
-
-        if ( empty($body) )
-            throw new Exception('Empty response body');
-
-        if ( wp_remote_retrieve_response_code($remote) != 200  )
-            throw new Exception($body);
-
-        return json_decode(wp_remote_retrieve_body($remote), true);
-    }
-
-    /**
-     * @return void
-     */
-    public function cli_push_update(): void
-    {
-        try {
-            WP_CLI::line('Preparing export');
-            $data = $this->prepare_export();
-            WP_CLI::line('Zip generated : '.$data['file']);
-
-            WP_CLI::line('Starting file upload');
-            $res = $this->push_update($data['manifest'], $data['file']);
-            WP_CLI::line('File uploaded');
-
-            WP_CLI::success('Plugin updated');
-            WP_CLI::line(json_encode($res, JSON_PRETTY_PRINT));
-        } catch ( Exception $exception ) {
-            WP_CLI::error($exception->getMessage());
-        }
     }
 }
